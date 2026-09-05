@@ -42,6 +42,7 @@
       height: 100vh;
       z-index: 1;
       background-color: #070e17 !important;
+      will-change: transform;
     }
 
     /* FILTRO DE MAPA OSCURO ELEGANTE */
@@ -185,7 +186,7 @@
       border: none !important;
     }
 
-    /* PIN DORADO CON ANIMACIÓN DE CAÍDA */
+    /* PIN DORADO OPTIMIZADO */
     .custom-pin-glow {
       width: 23.4px;
       height: 23.4px;
@@ -194,6 +195,7 @@
       border: 2px solid #ffffff;
       box-shadow: 0 0 18px rgba(216, 180, 103, 1), 0 0 36px rgba(216, 180, 103, 0.9);
       cursor: pointer;
+      will-change: transform, opacity;
       animation: pinDropFromTop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
     }
 
@@ -215,7 +217,7 @@
       }
     }
 
-    /* ANIMACIÓN DE TRAZADO DE LÍNEA CURVA CON SOMBRA */
+    /* ANIMACIÓN DE TRAZADO DE LÍNEA CURVA */
     .ruta-curva-animada {
       stroke-dashoffset: 1500;
       animation: drawCurvedLine 1.3s ease-out forwards;
@@ -235,12 +237,10 @@
     
     <!-- BARRA SUPERIOR EN DOS RENGLONES -->
     <header class="navbar-floating">
-      <!-- RENGLÓN 1: TÍTULO CENTRADO -->
       <div class="navbar-header">
         <h1>MIS VIAJES</h1>
       </div>
 
-      <!-- RENGLÓN 2: CIUDADES DESLIZABLES -->
       <nav class="destinations-row">
         <a class="item-destino" data-galeria="toledo-2025" data-lat="39.8628" data-lng="-4.0273">
           <div class="node-dot"></div>
@@ -276,24 +276,25 @@
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    // 1. Inicializar mapa centrado en Europa
+    // 1. Inicializar mapa con renderer Canvas/SVG optimizado
     const mapa = L.map('mapa', {
       zoomControl: false,
-      attributionControl: false
+      attributionControl: false,
+      preferCanvas: true
     }).setView([46.2276, 2.2137], 5);
 
-    setTimeout(() => { mapa.invalidateSize(); }, 200);
+    // Corregir dimensiones iniciales
+    requestAnimationFrame(() => mapa.invalidateSize());
 
     // 2. OpenStreetMap mapa base libre
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19
     }).addTo(mapa);
 
-    let pinesRegistrados = {}; // Objeto para rastrear pines ya colocados por clave (lat,lng)
-    let rutasPermanentes = [];
-    let lastCoords = null; 
+    const pinesRegistrados = new Map();
+    const curvasCache = new Map();
+    let lastCoords = null;
 
-    // Icono 10% más pequeño
     const pinIcon = L.divIcon({
       className: 'pin-container',
       html: '<div class="custom-pin-glow"></div>',
@@ -301,28 +302,32 @@
       iconAnchor: [11.7, 11.7]
     });
 
-    // Función matemática para generar una curva Bézier cuadrática suave entre dos puntos
-    function calcularPuntosCurva(p1, p2, numPuntos = 40) {
+    // Curva Bézier cuadrática memoizada (solo se calcula 1 vez por pareja de coordenadas)
+    function obtenerPuntosCurva(p1, p2) {
+      const cacheKey = `${p1.join(',')}_${p2.join(',')}`;
+      if (curvasCache.has(cacheKey)) return curvasCache.get(cacheKey);
+
       const lat1 = p1[0], lng1 = p1[1];
       const lat2 = p2[0], lng2 = p2[1];
 
       const midLat = (lat1 + lat2) / 2;
       const midLng = (lng1 + lng2) / 2;
-
-      const dLat = lat2 - lat1;
-      const dLng = lng2 - lng1;
-
       const factorCurvatura = 0.22;
-      const controlLat = midLat - (dLng * factorCurvatura);
-      const controlLng = midLng + (dLat * factorCurvatura);
+      
+      const controlLat = midLat - ((lng2 - lng1) * factorCurvatura);
+      const controlLng = midLng + ((lat2 - lat1) * factorCurvatura);
 
       const puntos = [];
+      const numPuntos = 30; // Reducido de 40 a 30 puntos sin pérdida visible de suavidad
+
       for (let i = 0; i <= numPuntos; i++) {
         const t = i / numPuntos;
         const lat = (1 - t) * (1 - t) * lat1 + 2 * (1 - t) * t * controlLat + t * t * lat2;
         const lng = (1 - t) * (1 - t) * lng1 + 2 * (1 - t) * t * controlLng + t * t * lng2;
         puntos.push([lat, lng]);
       }
+
+      curvasCache.set(cacheKey, puntos);
       return puntos;
     }
 
@@ -332,6 +337,8 @@
       item.addEventListener('click', function(e) {
         e.preventDefault();
 
+        if (this.classList.contains('active')) return;
+
         items.forEach(i => i.classList.remove('active'));
         this.classList.add('active');
 
@@ -339,11 +346,11 @@
         const lng = parseFloat(this.dataset.lng);
         const galeria = this.dataset.galeria;
         const newCoords = [lat, lng];
-        const keyPin = `${lat},${lng}`; // Clave única de la ubicación
+        const keyPin = `${lat},${lng}`;
 
-        // 1. Trazar la curva Bézier si se mueve desde otro punto
+        // 1. Trazar ruta si viene de otra ubicación
         if (lastCoords && (lastCoords[0] !== lat || lastCoords[1] !== lng)) {
-          const puntosArco = calcularPuntosCurva(lastCoords, newCoords);
+          const puntosArco = obtenerPuntosCurva(lastCoords, newCoords);
 
           const nuevaRutaCurva = L.polyline(puntosArco, {
             color: '#d8b467',
@@ -353,38 +360,47 @@
             className: 'ruta-curva-animada'
           }).addTo(mapa);
 
-          rutasPermanentes.push(nuevaRutaCurva);
+          // Liberar el hilo de GPU al finalizar la animación
+          const pathElement = nuevaRutaCurva.getElement();
+          if (pathElement) {
+            pathElement.addEventListener('animationend', () => {
+              pathElement.classList.remove('ruta-curva-animada');
+              pathElement.style.strokeDashoffset = '0';
+            }, { once: true });
+          }
         }
 
         lastCoords = newCoords;
 
-        // 2. Vuelo dinámico de la cámara hacia las nuevas coordenadas
+        // 2. Vuelo suave de cámara
         mapa.flyTo(newCoords, 6.5, {
-          duration: 1.2,
-          easeLinearity: 0.25
+          duration: 1.1,
+          easeLinearity: 0.2
         });
 
-        // 3. Crear el pin ÚNICAMENTE si no existe ya para esta ciudad
-        if (!pinesRegistrados[keyPin]) {
+        // 3. Crear pin único si no existe
+        if (!pinesRegistrados.has(keyPin)) {
           setTimeout(() => {
             const nuevoPin = L.marker(newCoords, { 
               icon: pinIcon,
               zIndexOffset: 1000 
             }).addTo(mapa);
 
-            pinesRegistrados[keyPin] = nuevoPin; // Guardar referencia para evitar duplicados
+            pinesRegistrados.set(keyPin, nuevoPin);
 
-            // Abrir la galería al hacer clic/tap en este pin específico
-            nuevoPin.on('click', function() {
+            nuevoPin.on('click', () => {
               window.location.href = `https://dimitrianox.github.io/Thumbs/?galeria=${galeria}`;
             });
-          }, 300);
+          }, 250);
         }
       });
     });
 
+    // Redimensionado optimizado con Debounce
+    let resizeTimer;
     window.addEventListener('resize', () => {
-      mapa.invalidateSize();
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => mapa.invalidateSize(), 150);
     });
   </script>
 </body>
