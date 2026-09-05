@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Colección de Viajes</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Manrope:wght@400;500;600&display=swap");
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: #070e17;
+      color: #e2e8f0;
+      font-family: 'Manrope', sans-serif;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    .app-layout {
+      display: flex;
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+    }
+
+    /* CONTENEDOR DEL MAPA LEAFLET */
+    #mapa {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      background-color: #070e17 !important;
+    }
+
+    /* FILTRO APLICADO ÚNICAMENTE A LA CAPA DE TILES (OSCURA LUXURY) */
+    #mapa .leaflet-tile-pane {
+      filter: invert(90%) hue-rotate(180deg) brightness(45%) contrast(90%) saturate(25%);
+      -webkit-filter: invert(90%) hue-rotate(180deg) brightness(45%) contrast(90%) saturate(25%);
+    }
+
+    /* OCULTAR CONTROLES Y ATRIBUCIONES DE LEAFLET */
+    .leaflet-control-attribution,
+    .leaflet-control-zoom,
+    .leaflet-bottom,
+    .leaflet-right {
+      display: none !important;
+    }
+
+    /* BARRA LATERAL TOTALMENTE TRANSPARENTE */
+    .sidebar-floating {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 100;
+      width: 290px;
+      height: 100%;
+      background: transparent !important;
+      border-right: none;
+      padding: 2.5rem 1.2rem;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-header h1 {
+      font-family: 'Cinzel', serif;
+      font-size: 1.3rem;
+      letter-spacing: 4px;
+      margin-bottom: 2.5rem;
+      background: linear-gradient(180deg, #fff2a3 0%, #d8b467 50%, #9e7a2f 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.9));
+    }
+
+    /* LISTA DE DESTINOS Y LÍNEA TEMPORAL */
+    .destinations-list {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+      overflow-y: auto;
+    }
+
+    .timeline-line {
+      position: absolute;
+      left: 14px;
+      top: 15px;
+      bottom: 15px;
+      width: 2px;
+      background: linear-gradient(180deg, #d8b467 0%, rgba(71, 85, 105, 0.3) 100%);
+      z-index: 1;
+    }
+
+    .item-destino {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      text-decoration: none;
+      z-index: 2;
+      cursor: pointer;
+      transition: transform 0.2s ease;
+    }
+
+    .item-destino:hover {
+      transform: translateX(4px);
+    }
+
+    .node-dot {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background-color: #0b1522;
+      border: 2px solid #475569;
+      transition: all 0.3s ease;
+      flex-shrink: 0;
+    }
+
+    .node-text h2 {
+      font-family: 'Cinzel', serif;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #94a3b8;
+      letter-spacing: 2px;
+      transition: color 0.3s ease;
+      text-shadow: 0 2px 6px rgba(0,0,0,0.9);
+    }
+
+    .node-text span {
+      font-size: 0.75rem;
+      color: #64748b;
+      letter-spacing: 1px;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.9);
+    }
+
+    /* ESTADO SELECCIONADO (ACTIVO) */
+    .item-destino.active .node-dot {
+      background: radial-gradient(circle, #fff2a3 0%, #d8b467 60%, #9e7a2f 100%);
+      border-color: #fff2a3;
+      box-shadow: 0 0 12px rgba(216, 180, 103, 0.9);
+    }
+
+    .item-destino.active .node-text h2 {
+      background: linear-gradient(180deg, #fff2a3 0%, #d8b467 50%, #9e7a2f 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .item-destino.active .node-text span {
+      color: #d8b467;
+    }
+
+    /* RESETEAR ÍCONO CONTENEDOR LEAFLET */
+    .leaflet-div-icon {
+      background: transparent !important;
+      border: none !important;
+    }
+
+    /* PIN DORADO CON ANIMACIÓN */
+    .custom-pin {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: radial-gradient(circle, #fff2a3 0%, #d8b467 60%, #9e7a2f 100%);
+      border: 2px solid #ffffff;
+      box-shadow: 0 0 20px rgba(216, 180, 103, 1), 0 0 40px rgba(216, 180, 103, 0.9);
+      animation: pinDrop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    }
+
+    @keyframes pinDrop {
+      0% {
+        transform: translateY(-80px) scale(0.2);
+        opacity: 0;
+      }
+      80% {
+        transform: translateY(0) scale(1.2);
+        opacity: 1;
+      }
+      100% {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="app-layout">
+    
+    <!-- BARRA LATERAL TRANSPARENTE -->
+    <div class="sidebar-floating">
+      <div class="sidebar-header">
+        <h1>MIS VIAJES</h1>
+      </div>
+
+      <div class="destinations-list">
+        <div class="timeline-line"></div>
+
+        <a class="item-destino" data-galeria="toledo-2025" data-lat="39.8628" data-lng="-4.0273">
+          <div class="node-dot"></div>
+          <div class="node-text">
+            <h2>TOLEDO</h2>
+            <span>2025</span>
+          </div>
+        </a>
+
+        <a class="item-destino" data-galeria="paris-2024" data-lat="48.8566" data-lng="2.3522">
+          <div class="node-dot"></div>
+          <div class="node-text">
+            <h2>PARÍS</h2>
+            <span>2024</span>
+          </div>
+        </a>
+
+        <a class="item-destino" data-galeria="londres-2025" data-lat="51.5074" data-lng="-0.1278">
+          <div class="node-dot"></div>
+          <div class="node-text">
+            <h2>LONDRES</h2>
+            <span>2025</span>
+          </div>
+        </a>
+
+      </div>
+    </div>
+
+    <!-- MAPA LEAFLET -->
+    <div id="mapa"></div>
+
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // 1. Inicializar mapa centrado en Europa
+    const mapa = L.map('mapa', {
+      zoomControl: false,
+      attributionControl: false
+    }).setView([46.2276, 2.2137], 5);
+
+    // 2. OpenStreetMap como mapa base
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19
+    }).addTo(mapa);
+
+    let currentMarker = null;
+
+    const pinIcon = L.divIcon({
+      className: 'custom-pin',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    });
+
+    const items = document.querySelectorAll('.item-destino');
+
+    items.forEach(item => {
+      item.addEventListener('click', function(e) {
+        e.preventDefault();
+
+        items.forEach(i => i.classList.remove('active'));
+        this.classList.add('active');
+
+        const lat = parseFloat(this.dataset.lat);
+        const lng = parseFloat(this.dataset.lng);
+        const galeria = this.dataset.galeria;
+
+        // 1. Vuelo dinámico y ágil (1.2 segundos)
+        mapa.flyTo([lat, lng], 7, {
+          duration: 1.2,
+          easeLinearity: 0.25
+        });
+
+        // 2. Renderizar marcador dorado
+        if (currentMarker) {
+          mapa.removeLayer(currentMarker);
+        }
+        
+        currentMarker = L.marker([lat, lng], { 
+          icon: pinIcon,
+          zIndexOffset: 1000 
+        }).addTo(mapa);
+
+        // 3. Transición rápida hacia GitHub Pages (1.5 segundos)
+        setTimeout(() => {
+          window.location.href = `https://dimitrianox.github.io/Thumbs/?galeria=${galeria}`;
+        }, 1500);
+      });
+    });
+  </script>
+</body>
+</html>
