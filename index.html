@@ -179,31 +179,52 @@
       color: #d8b467;
     }
 
-    /* ESTILO DEL MARCADOR DORADO NATIVO */
+    /* CONTENEDOR DEL MARCADOR LEAFLET */
     .pin-container {
       background: transparent !important;
       border: none !important;
     }
 
+    /* PIN DORADO CON ANIMACIÓN DE CAÍDA */
     .custom-pin-glow {
-      width: 26px;
-      height: 26px;
+      width: 23.4px;
+      height: 23.4px;
       border-radius: 50%;
       background: radial-gradient(circle, #fff2a3 0%, #d8b467 60%, #9e7a2f 100%);
       border: 2px solid #ffffff;
-      box-shadow: 0 0 20px rgba(216, 180, 103, 1), 0 0 40px rgba(216, 180, 103, 0.9);
+      box-shadow: 0 0 18px rgba(216, 180, 103, 1), 0 0 36px rgba(216, 180, 103, 0.9);
       cursor: pointer;
-      animation: pinDrop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+      animation: pinDropFromTop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
     }
 
-    @keyframes pinDrop {
+    @keyframes pinDropFromTop {
       0% {
-        transform: scale(0.1);
+        transform: translateY(-250px) scale(0.3);
         opacity: 0;
       }
-      100% {
-        transform: scale(1);
+      70% {
+        transform: translateY(0) scale(1.1);
         opacity: 1;
+      }
+      85% {
+        transform: translateY(-8px) scale(0.95);
+      }
+      100% {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+      }
+    }
+
+    /* ANIMACIÓN DE TRAZADO DE LÍNEA CURVA CON SOMBRA */
+    .ruta-curva-animada {
+      stroke-dashoffset: 1500;
+      animation: drawCurvedLine 1.3s ease-out forwards;
+      filter: drop-shadow(0 0 2px rgba(216, 180, 103, .3));
+    }
+
+    @keyframes drawCurvedLine {
+      to {
+        stroke-dashoffset: 0;
       }
     }
   </style>
@@ -268,15 +289,42 @@
       maxZoom: 19
     }).addTo(mapa);
 
-    let currentMarker = null;
+    let pinesRegistrados = {}; // Objeto para rastrear pines ya colocados por clave (lat,lng)
+    let rutasPermanentes = [];
+    let lastCoords = null; 
 
-    // Crear icono personalizado garantizando el renderizado DOM
+    // Icono 10% más pequeño
     const pinIcon = L.divIcon({
       className: 'pin-container',
       html: '<div class="custom-pin-glow"></div>',
-      iconSize: [26, 26],
-      iconAnchor: [13, 13]
+      iconSize: [23.4, 23.4],
+      iconAnchor: [11.7, 11.7]
     });
+
+    // Función matemática para generar una curva Bézier cuadrática suave entre dos puntos
+    function calcularPuntosCurva(p1, p2, numPuntos = 40) {
+      const lat1 = p1[0], lng1 = p1[1];
+      const lat2 = p2[0], lng2 = p2[1];
+
+      const midLat = (lat1 + lat2) / 2;
+      const midLng = (lng1 + lng2) / 2;
+
+      const dLat = lat2 - lat1;
+      const dLng = lng2 - lng1;
+
+      const factorCurvatura = 0.22;
+      const controlLat = midLat - (dLng * factorCurvatura);
+      const controlLng = midLng + (dLat * factorCurvatura);
+
+      const puntos = [];
+      for (let i = 0; i <= numPuntos; i++) {
+        const t = i / numPuntos;
+        const lat = (1 - t) * (1 - t) * lat1 + 2 * (1 - t) * t * controlLat + t * t * lat2;
+        const lng = (1 - t) * (1 - t) * lng1 + 2 * (1 - t) * t * controlLng + t * t * lng2;
+        puntos.push([lat, lng]);
+      }
+      return puntos;
+    }
 
     const items = document.querySelectorAll('.item-destino');
 
@@ -290,27 +338,48 @@
         const lat = parseFloat(this.dataset.lat);
         const lng = parseFloat(this.dataset.lng);
         const galeria = this.dataset.galeria;
+        const newCoords = [lat, lng];
+        const keyPin = `${lat},${lng}`; // Clave única de la ubicación
 
-        // 1. Vuelo dinámico de la cámara al destino
-        mapa.flyTo([lat, lng], 7, {
+        // 1. Trazar la curva Bézier si se mueve desde otro punto
+        if (lastCoords && (lastCoords[0] !== lat || lastCoords[1] !== lng)) {
+          const puntosArco = calcularPuntosCurva(lastCoords, newCoords);
+
+          const nuevaRutaCurva = L.polyline(puntosArco, {
+            color: '#d8b467',
+            weight: 2,
+            opacity: 0.55,
+            dashArray: '5, 8',
+            className: 'ruta-curva-animada'
+          }).addTo(mapa);
+
+          rutasPermanentes.push(nuevaRutaCurva);
+        }
+
+        lastCoords = newCoords;
+
+        // 2. Vuelo dinámico de la cámara hacia las nuevas coordenadas
+        mapa.flyTo(newCoords, 6.5, {
           duration: 1.2,
           easeLinearity: 0.25
         });
 
-        // 2. Quitar marcador previo y colocar el nuevo
-        if (currentMarker) {
-          mapa.removeLayer(currentMarker);
-        }
-        
-        currentMarker = L.marker([lat, lng], { 
-          icon: pinIcon,
-          zIndexOffset: 1000 
-        }).addTo(mapa);
+        // 3. Crear el pin ÚNICAMENTE si no existe ya para esta ciudad
+        if (!pinesRegistrados[keyPin]) {
+          setTimeout(() => {
+            const nuevoPin = L.marker(newCoords, { 
+              icon: pinIcon,
+              zIndexOffset: 1000 
+            }).addTo(mapa);
 
-        // 3. Abrir la galería ÚNICAMENTE al hacer clic/tap directo en el pin
-        currentMarker.on('click', function() {
-          window.location.href = `https://dimitrianox.github.io/Thumbs/?galeria=${galeria}`;
-        });
+            pinesRegistrados[keyPin] = nuevoPin; // Guardar referencia para evitar duplicados
+
+            // Abrir la galería al hacer clic/tap en este pin específico
+            nuevoPin.on('click', function() {
+              window.location.href = `https://dimitrianox.github.io/Thumbs/?galeria=${galeria}`;
+            });
+          }, 300);
+        }
       });
     });
 
